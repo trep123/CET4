@@ -1,5 +1,5 @@
 // 业务层：对应方案书 §7 的各个接口，只是改为浏览器内函数调用
-import { all, get, run, transaction, persist, nowIso } from './db.js';
+import { all, get, run, transaction, persist, nowIso, seedStatus, loadMoreChunks } from './db.js';
 import { schedule } from './scheduler.js';
 
 // 本地日期边界（转为 UTC ISO 比较）
@@ -30,8 +30,15 @@ export async function updateSettings({ daily_new_count, accent, show_example }) 
 function newStartedToday() {
   return get(`SELECT COUNT(DISTINCT word_id) AS n FROM review_logs WHERE mode='new' AND reviewed_at >= ?`, [dayStartIso()]).n;
 }
-function unlearnedCount() {
+function localUnlearned() {
   return get(`SELECT COUNT(*) AS n FROM words w LEFT JOIN review_states s ON s.word_id=w.id WHERE w.active=1 AND s.id IS NULL`).n;
+}
+// 未学词 = 本地未学 + 尚未加载分包中的词
+function unlearnedCount() {
+  return localUnlearned() + seedStatus().pending;
+}
+function totalWords() {
+  return get('SELECT COUNT(*) AS n FROM words WHERE active=1').n + seedStatus().pending;
 }
 function newRemaining() {
   const { daily_new_count } = getSettings();
@@ -52,7 +59,7 @@ function streak() {
 export function dashboard() {
   const now = nowIso();
   return {
-    total: get('SELECT COUNT(*) AS n FROM words WHERE active=1').n,
+    total: totalWords(),
     new_available: newRemaining(),
     unlearned: unlearnedCount(),
     daily_new_count: getSettings().daily_new_count,
@@ -65,9 +72,11 @@ export function dashboard() {
 
 const WORD_COLS = 'w.id, w.word, w.ipa_uk, w.ipa_us, w.meaning_zh, w.example_en, w.example_zh, w.level, w.tags';
 
-export function studyQueue(mode) {
+export async function studyQueue(mode) {
   const now = nowIso();
   if (mode === 'new') {
+    // 本地未学词不够今天的额度时，按需加载下一个分包
+    while (localUnlearned() < newRemaining() && seedStatus().pendingChunks > 0) await loadMoreChunks(1);
     return all(`SELECT ${WORD_COLS} FROM words w LEFT JOIN review_states s ON s.word_id=w.id
                 WHERE w.active=1 AND s.id IS NULL ORDER BY w.id LIMIT ?`, [newRemaining()]);
   }
@@ -80,6 +89,7 @@ export function studyQueue(mode) {
                 WHERE w.active=1 AND s.last_rating IN ('again','hard') ORDER BY s.last_reviewed_at DESC LIMIT 200`);
   }
   if (mode === 'all') {
+    if (seedStatus().pendingChunks) await loadMoreChunks(Infinity);
     return all(`SELECT ${WORD_COLS} FROM words w WHERE w.active=1 ORDER BY w.word LIMIT 100`);
   }
   throw new Error('无效队列');
@@ -134,7 +144,7 @@ export function stats() {
   const total7 = logs.length;
   const correct7 = logs.filter((l) => l.was_correct).length;
   return {
-    total: get('SELECT COUNT(*) AS n FROM words WHERE active=1').n,
+    total: totalWords(),
     started: get('SELECT COUNT(*) AS n FROM review_states').n,
     mastered: get("SELECT COUNT(*) AS n FROM review_states WHERE repetitions >= 3 AND last_rating IN ('good','easy')").n,
     today_reviews: get('SELECT COUNT(*) AS n FROM review_logs WHERE reviewed_at >= ?', [dayStartIso()]).n,
