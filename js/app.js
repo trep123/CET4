@@ -41,9 +41,13 @@ function speak(word) {
 }
 if ('speechSynthesis' in window) speechSynthesis.getVoices();
 
+// 当前口音没有音标时回退到另一套，并标注（英）/（美）
 const ipaOf = (w) => {
   const { accent } = api.getSettings();
-  return (accent === 'en-US' ? w.ipa_us : w.ipa_uk) || '';
+  const main = accent === 'en-US' ? w.ipa_us : w.ipa_uk;
+  if (main) return main;
+  const other = accent === 'en-US' ? w.ipa_uk : w.ipa_us;
+  return other ? `${other}（${accent === 'en-US' ? '英' : '美'}）` : '';
 };
 
 // ---------- 页面：学习概览 ----------
@@ -67,7 +71,7 @@ function viewHome() {
       ${task('review', '到期复习', `${d.due} 个词已到复习时间`, d.due)}
       ${task('wrong', '错词复习', `${d.wrong} 个词待巩固`, d.wrong)}
     </section>
-    ${d.unlearned === 0 && d.total <= 10 ? `<p class="note">目前只有 ${d.total} 个示例词。到「词库」页导入你自己的四级 CSV 词库。</p>` : ''}
+    ${d.total <= 10 ? `<p class="note">目前只有 ${d.total} 个示例词。到「词库」页导入你自己的四级 CSV 词库。</p>` : ''}
   `;
 }
 const tile = (label, val, sub = '') => `<div class="tile"><span>${label}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
@@ -340,7 +344,8 @@ function route() {
 
 (async () => {
   try {
-    await openDb();
+    const merged = await openDb();
+    if (merged && merged.created) setTimeout(() => toast(`已载入内置四级词库：新增 ${merged.created} 词，更新 ${merged.updated} 词`, 4000), 300);
   } catch (e) {
     $app.innerHTML = `<div class="empty-box">数据库加载失败：${esc(e.message)}<br/>请使用较新的 Chrome / Edge / Firefox / Safari，并通过 http(s) 访问（不能直接双击打开文件）。</div>`;
     return;
