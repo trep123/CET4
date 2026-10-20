@@ -113,14 +113,57 @@ function seed() {
   }
 }
 
+// 内置词库 data/cet4.sqlite3（由 tools/build_seed.py 从 xlsx 生成）。
+// 词库更新后把 SEED_VERSION 加 1，已有用户下次打开时自动合并（只更新词条，保留学习进度）。
+export const SEED_VERSION = 1;
+const SEED_URL = 'data/cet4.sqlite3';
+
+async function mergeSeed() {
+  const cur = get('PRAGMA user_version').user_version;
+  if (cur >= SEED_VERSION) return null;
+  let res;
+  try {
+    res = await fetch(`${SEED_URL}?v=${SEED_VERSION}`);
+    if (!res.ok) throw new Error(res.status);
+  } catch (e) {
+    console.warn('内置词库加载失败，使用示例词', e);
+    return null;
+  }
+  const seedDb = new SQL.Database(new Uint8Array(await res.arrayBuffer()));
+  const st = seedDb.prepare('SELECT word, ipa_uk, ipa_us, meaning_zh, level, tags, source FROM words ORDER BY id');
+  const t = nowIso();
+  let created = 0, updated = 0;
+  transaction(() => {
+    while (st.step()) {
+      const w = st.getAsObject();
+      const exist = get('SELECT id FROM words WHERE word=?', [w.word]);
+      if (exist) {
+        db.run(`UPDATE words SET ipa_uk=COALESCE(NULLIF(?,''), ipa_uk), ipa_us=COALESCE(NULLIF(?,''), ipa_us), meaning_zh=?, level=?, tags=?, active=1 WHERE id=?`,
+          [w.ipa_uk, w.ipa_us, w.meaning_zh, w.level, w.tags, exist.id]);
+        updated++;
+      } else {
+        db.run(`INSERT INTO words (word, ipa_uk, ipa_us, meaning_zh, example_en, example_zh, level, tags, source, active, created_at)
+                VALUES (?,?,?,?,'','',?,?,?,1,?)`, [w.word, w.ipa_uk, w.ipa_us, w.meaning_zh, w.level, w.tags, w.source, t]);
+        created++;
+      }
+    }
+  });
+  st.free();
+  seedDb.close();
+  db.run(`PRAGMA user_version=${SEED_VERSION}`);
+  return { created, updated };
+}
+
 export async function openDb() {
   SQL = await window.initSqlJs({ locateFile: (f) => `assets/vendor/sqljs/${f}` });
   const bytes = await idbGet();
   db = bytes ? new SQL.Database(new Uint8Array(bytes)) : new SQL.Database();
   db.run('PRAGMA foreign_keys=ON');
   db.exec(SCHEMA);
+  const merged = await mergeSeed();
   seed();
   await persist();
+  return merged;
 }
 
 // 每次写操作后整库导出存入 IndexedDB；export 会重置 PRAGMA，需重新开启外键
@@ -186,6 +229,7 @@ export async function restoreBytes(bytes) {
   db = test;
   db.run('PRAGMA foreign_keys=ON');
   db.exec(SCHEMA);
+  await mergeSeed();
   seed();
   await persist();
 }
