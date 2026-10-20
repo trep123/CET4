@@ -1,6 +1,6 @@
 // 业务层：对应方案书 §7 的各个接口，只是改为浏览器内函数调用
-import { all, get, run, transaction, persist, nowIso, seedStatus, loadMoreChunks } from './db.js';
-import { schedule } from './scheduler.js';
+import { all, get, run, transaction, persist, nowIso, seedStatus, loadMoreChunks } from './db.js?v=5';
+import { schedule } from './scheduler.js?v=5';
 
 // 本地日期边界（转为 UTC ISO 比较）
 function dayStartIso(offsetDays = 0) {
