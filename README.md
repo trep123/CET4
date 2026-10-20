@@ -32,12 +32,13 @@ CET4/
 ├─ js/
 │  ├─ app.js                  # 路由与各页面：概览 / 卡片 / 错词本 / 词库 / 统计 / 设置
 │  ├─ api.js                  # 业务逻辑（对应原方案的 /api/* 接口）
-│  ├─ db.js                   # sql.js 初始化、建表、示例词、IndexedDB 持久化、备份恢复
+│  ├─ db.js                   # 建表、词库分包按需加载、IndexedDB 持久化、备份恢复
 │  └─ scheduler.js            # 间隔复习算法
-├─ data/cet4.sqlite3          # 内置四级词库（SQLite），首次打开自动载入
+├─ data/words/                # 内置四级词库分包（manifest.json + part-NN.sqlite3），按需加载
+├─ data/users.sqlite3         # 登录用户
 ├─ data/source/*.xlsx        # 词库源表
 ├─ data/words.csv             # 可选：放在仓库里的 CSV 词库，页面上一键加载
-├─ tools/build_seed.py        # xlsx → data/cet4.sqlite3（保留 users 表）
+├─ tools/build_seed.py        # xlsx → data/words/ 分包
 ├─ tools/adduser.py           # 用户管理（users 表）
 ├─ assets/vendor/sqljs/       # sql.js 1.13.0（sql-wasm.js / sql-wasm.wasm）
 └─ docs/IMPLEMENTATION_PLAN.md
@@ -45,9 +46,9 @@ CET4/
 
 ## 登录与用户
 
-打开页面需先登录。用户存放在 `data/cet4.sqlite3` 的 `users` 表（username / name / role / salt / hash / iterations / disabled），密码以 PBKDF2-SHA256（随机盐，100000 次迭代）哈希保存，不存明文。登录状态保留 7 天，右上角可退出。
+打开页面需先登录。用户存放在 `data/users.sqlite3`（约 3KB，登录时才读取）的 `users` 表（username / name / role / salt / hash / iterations / disabled），密码以 PBKDF2-SHA256（随机盐，100000 次迭代）哈希保存，不存明文。登录状态保留 7 天，右上角可退出。
 
-管理用户（只需 Python 3 标准库，改完提交 `data/cet4.sqlite3`）：
+管理用户（只需 Python 3 标准库，改完提交 `data/users.sqlite3`）：
 
 ```bash
 python tools/adduser.py <用户名> <密码> [显示名称] [角色]   # 添加 / 修改密码
@@ -57,26 +58,23 @@ python tools/adduser.py --disable <用户名>   # --enable / --remove
 
 > 纯前端登录只是访问门槛：仓库公开时数据库文件可被直接下载，请使用不在别处复用的密码。
 
-## 内置四级词库（5278 词）
+## 内置四级词库（5278 词，按需加载）
 
-`data/cet4.sqlite3` 是由 `data/source/英语四级词汇与翻译_5278词.xlsx` 生成的 SQLite 词库（5276 条；may/May、march/March 大小写同形词已合并释义）：
+词库由 `data/source/英语四级词汇与翻译_5278词.xlsx` 生成，切成 11 个 SQLite 分包放在 `data/words/`（5276 条；may/May、march/March 大小写同形词已合并释义）：
 
-- 按真题词频排序，新词队列按词频从高到低出词
-- `level`：四级核心 4023 词为 `CET-4`，冲刺扩展 1253 词为 `CET-4 扩展`
-- 美式音标 `ipa_us`：全部 5276 词都有，来自 `data/source/ipa_us.tsv`（open-dict-data/ipa-dict en_US 取第一个读音，22 个短语/拼写变体人工补充，ɫ→l、ɹ→r）；默认口音为美式
-- 英式音标 `ipa_uk`：保留 xlsx 原表中的英式读音（356 词缺失），在设置里切到英式时显示，缺失则回退显示美式并标注（美）
-- `tags`：学习层级;主题分类;子分类（以及「又作 …」其他拼写）
+- `manifest.json` 记录版本号、总词数和分包列表；`part-01.sqlite3` … 每包 500 词（约 55KB），按真题词频排序
+- **首次打开只下载第 1 包**；学新词时本地未学词不够当天额度才加载下一包；搜索、导出 CSV、「全部词汇」巡览时自动加载剩余分包；「词库」页也可手动「立即加载全部」
+- 已加载的分包记录在本地 `seed_chunks` 表，不会重复下载；词库内容更新后（manifest 版本变化）只刷新已加载过的分包，学习进度保留
+- `level`：四级核心 4023 词为 `CET-4`，冲刺扩展 1253 词为 `CET-4 扩展`；`tags`：学习层级;主题分类;子分类
+- 美式音标 `ipa_us`：全部词条都有，来自 `data/source/ipa_us.tsv`（open-dict-data/ipa-dict en_US 取第一个读音，22 个短语/拼写变体人工补充，ɫ→l、ɹ→r）；默认口音为美式
+- 英式音标 `ipa_uk`：保留 xlsx 原表中的英式读音（356 词缺失），设置里切到英式时显示，缺失则回退显示美式并标注（美）
 
-网页首次打开时自动载入；已经用过的浏览器下次打开会自动合并（只更新词条，学习进度保留）。
-
-修改 xlsx 后重新生成：
+修改 xlsx 或 ipa_us.tsv 后重新生成并提交 `data/words/`（版本号按内容自动计算）：
 
 ```bash
 pip install openpyxl
 python tools/build_seed.py
 ```
-
-然后把 `js/db.js` 里的 `SEED_VERSION` 加 1 并提交，所有浏览器下次打开时会自动合并新版词库。
 
 ## 添加词库
 
