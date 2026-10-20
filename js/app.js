@@ -1,8 +1,8 @@
-import { openDb, exportBytes, restoreBytes, health, seedStatus, loadMoreChunks } from './db.js?v=5';
-import { getSQL } from './sqlite.js?v=5';
-import * as api from './api.js?v=5';
-import { RATINGS } from './scheduler.js?v=5';
-import { currentUser, login, logout } from './auth.js?v=5';
+import { openDb, exportBytes, restoreBytes, health, seedStatus, loadMoreChunks } from './db.js?v=6';
+import { getSQL } from './sqlite.js?v=6';
+import * as api from './api.js?v=6';
+import { RATINGS } from './scheduler.js?v=6';
+import { currentUser, login, logout } from './auth.js?v=6';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
