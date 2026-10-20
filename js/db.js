@@ -1,4 +1,6 @@
 // SQLite（sql.js）数据层：建表、持久化到 IndexedDB、备份/恢复
+import { getSQL } from './sqlite.js';
+
 const IDB_NAME = 'wordsprint';
 const IDB_STORE = 'sqlite';
 const IDB_KEY = 'main';
@@ -73,6 +75,11 @@ CREATE TABLE IF NOT EXISTS review_logs (
 );
 CREATE INDEX IF NOT EXISTS ix_logs_word ON review_logs(word_id);
 CREATE INDEX IF NOT EXISTS ix_logs_time ON review_logs(reviewed_at);
+CREATE TABLE IF NOT EXISTS seed_chunks (
+  file VARCHAR(40) PRIMARY KEY,
+  version VARCHAR(40) NOT NULL,
+  loaded_at VARCHAR(40) NOT NULL
+);
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY,
   daily_new_count INTEGER DEFAULT 20,
@@ -96,10 +103,9 @@ const STARTER = [
   ['schedule', '/ˈʃedjuːl/', '/ˈskedʒuːl/', 'n. 日程表 v. 安排', 'The meeting is scheduled for Monday.', '会议安排在周一。', '名词;动词'],
 ];
 
-function seed() {
-  const n = get('SELECT COUNT(*) AS n FROM words').n;
+function seedStarter() {
   const t = nowIso();
-  if (n === 0) {
+  {
     for (const w of STARTER) {
       db.run(
         `INSERT INTO words (word, ipa_uk, ipa_us, meaning_zh, example_en, example_zh, level, tags, source, active, created_at)
@@ -108,31 +114,43 @@ function seed() {
       );
     }
   }
+}
+
+function seedSettings() {
+  const t = nowIso();
   if (!get('SELECT id FROM app_settings WHERE id=1')) {
     db.run(`INSERT INTO app_settings (id, daily_new_count, accent, show_example, created_at, updated_at) VALUES (1,20,'en-US',1,?,?)`, [t, t]);
   }
 }
 
-// 内置词库 data/cet4.sqlite3（由 tools/build_seed.py 从 xlsx 生成）。
-// 词库更新后把 SEED_VERSION 加 1，已有用户下次打开时自动合并（只更新词条，保留学习进度）。
-export const SEED_VERSION = 2; // v2：全部词条补齐美式音标，默认口音改为美式
-const SEED_URL = 'data/cet4.sqlite3';
+// ---------- 按需加载的内置词库 ----------
+// data/words/manifest.json 列出分包（每包 500 词，按词频排序）。首次只加载第 1 包，
+// 新词不够、搜索、导出、巡览全部词汇时再加载后续分包。已加载分包记录在 seed_chunks 表；
+// manifest 版本变化时自动用新内容更新已加载的分包（学习进度保留）。
+const SEED_DIR = 'data/words/';
+let manifest = null;
 
-async function mergeSeed() {
-  const cur = get('PRAGMA user_version').user_version;
-  if (cur >= SEED_VERSION) return null;
-  let res;
+async function fetchManifest() {
   try {
-    res = await fetch(`${SEED_URL}?v=${SEED_VERSION}`);
+    const res = await fetch(`${SEED_DIR}manifest.json?t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(res.status);
+    return await res.json();
   } catch (e) {
-    console.warn('内置词库加载失败，使用示例词', e);
+    console.warn('词库清单加载失败', e);
     return null;
   }
-  const seedDb = new SQL.Database(new Uint8Array(await res.arrayBuffer()));
-  const st = seedDb.prepare('SELECT word, ipa_uk, ipa_us, meaning_zh, level, tags, source FROM words ORDER BY id');
+}
+
+function loadedChunks() {
+  return Object.fromEntries(all('SELECT file, version FROM seed_chunks').map((r) => [r.file, r.version]));
+}
+
+async function loadChunk(chunk) {
+  const res = await fetch(`${SEED_DIR}${chunk.file}?v=${manifest.version}`);
+  if (!res.ok) throw new Error(`词库分包 ${chunk.file} 加载失败`);
+  const part = new SQL.Database(new Uint8Array(await res.arrayBuffer()));
+  const st = part.prepare('SELECT word, ipa_uk, ipa_us, meaning_zh, level, tags, source FROM words ORDER BY id');
   const t = nowIso();
-  let created = 0, updated = 0;
   transaction(() => {
     while (st.step()) {
       const w = st.getAsObject();
@@ -140,31 +158,79 @@ async function mergeSeed() {
       if (exist) {
         db.run(`UPDATE words SET ipa_uk=COALESCE(NULLIF(?,''), ipa_uk), ipa_us=COALESCE(NULLIF(?,''), ipa_us), meaning_zh=?, level=?, tags=?, active=1 WHERE id=?`,
           [w.ipa_uk, w.ipa_us, w.meaning_zh, w.level, w.tags, exist.id]);
-        updated++;
       } else {
         db.run(`INSERT INTO words (word, ipa_uk, ipa_us, meaning_zh, example_en, example_zh, level, tags, source, active, created_at)
                 VALUES (?,?,?,?,'','',?,?,?,1,?)`, [w.word, w.ipa_uk, w.ipa_us, w.meaning_zh, w.level, w.tags, w.source, t]);
-        created++;
       }
     }
+    db.run('INSERT OR REPLACE INTO seed_chunks (file, version, loaded_at) VALUES (?,?,?)', [chunk.file, manifest.version, t]);
   });
   st.free();
-  seedDb.close();
-  if (cur < 2) db.run("UPDATE app_settings SET accent='en-US', updated_at=? WHERE id=1", [t]);
-  db.run(`PRAGMA user_version=${SEED_VERSION}`);
-  return { created, updated };
+  part.close();
+}
+
+let loading = Promise.resolve();
+// 串行执行，避免同一分包被并发加载两次
+function serial(fn) {
+  const run = loading.then(fn, fn);
+  loading = run.catch(() => {});
+  return run;
+}
+
+/** 尚未加载的分包及其词数 */
+export function seedStatus() {
+  if (!manifest) return { total: 0, pending: 0, pendingChunks: 0, chunks: 0 };
+  const done = loadedChunks();
+  const rest = manifest.chunks.filter((c) => done[c.file] !== manifest.version);
+  return { total: manifest.total, pending: rest.reduce((n, c) => n + c.count, 0), pendingChunks: rest.length, chunks: manifest.chunks.length };
+}
+
+/** 按顺序再加载 n 个分包（n=Infinity 为全部），onProgress(已完成, 总数) */
+export function loadMoreChunks(n = 1, onProgress) {
+  return serial(async () => {
+    if (!manifest) return 0;
+    const done = loadedChunks();
+    const rest = manifest.chunks.filter((c) => done[c.file] !== manifest.version).slice(0, n);
+    let i = 0;
+    for (const c of rest) {
+      await loadChunk(c);
+      onProgress?.(++i, rest.length);
+    }
+    if (rest.length) await persist();
+    return rest.length;
+  });
+}
+
+async function initSeed() {
+  manifest = await fetchManifest();
+  if (!manifest) return;
+  // 兼容旧版本：之前已一次性合并完整词库的浏览器，直接标记全部分包为已加载
+  if (get('PRAGMA user_version').user_version >= 1 && !get('SELECT 1 FROM seed_chunks LIMIT 1') && get("SELECT 1 FROM words WHERE source='cet4-5278' LIMIT 1")) {
+    const t = nowIso();
+    for (const c of manifest.chunks) db.run('INSERT OR REPLACE INTO seed_chunks (file, version, loaded_at) VALUES (?,?,?)', [c.file, manifest.version, t]);
+  }
+  if (get('PRAGMA user_version').user_version < 2) {
+    db.run("UPDATE app_settings SET accent='en-US', updated_at=? WHERE id=1", [nowIso()]);
+    db.run('PRAGMA user_version=2');
+  }
+  const done = loadedChunks();
+  const stale = manifest.chunks.filter((c) => done[c.file] && done[c.file] !== manifest.version);
+  for (const c of stale) await loadChunk(c); // 词库内容更新：只刷新已加载过的分包
+  if (!Object.keys(done).length) await loadChunk(manifest.chunks[0]); // 首次只加载第 1 包
 }
 
 export async function openDb() {
-  SQL = await window.initSqlJs({ locateFile: (f) => `assets/vendor/sqljs/${f}` });
+  SQL = await getSQL();
   const bytes = await idbGet();
   db = bytes ? new SQL.Database(new Uint8Array(bytes)) : new SQL.Database();
   db.run('PRAGMA foreign_keys=ON');
   db.exec(SCHEMA);
-  const merged = await mergeSeed();
-  seed();
+  const fresh = !get('SELECT 1 FROM app_settings WHERE id=1');
+  if (fresh) seedSettings();
+  await initSeed();
+  if (!get('SELECT 1 FROM words LIMIT 1')) seedStarter(); // 词库清单不可用时的兜底示例词
   await persist();
-  return merged;
+  return { fresh };
 }
 
 // 每次写操作后整库导出存入 IndexedDB；export 会重置 PRAGMA，需重新开启外键
@@ -230,7 +296,7 @@ export async function restoreBytes(bytes) {
   db = test;
   db.run('PRAGMA foreign_keys=ON');
   db.exec(SCHEMA);
-  await mergeSeed();
-  seed();
+  seedSettings();
+  await initSeed();
   await persist();
 }
