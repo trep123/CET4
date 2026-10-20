@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WordSprint · CET-4 单词记忆</title>
+  <meta name="description" content="WordSprint：纯前端 CET-4 单词卡片记忆工具，IPA 音标、间隔复习、错词本、学习统计，数据保存在本机浏览器。" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%235b4bdb'/><text x='32' y='43' font-size='30' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'>W</text></svg>" />
+  <link rel="stylesheet" href="css/style.css?v=1" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">W</span><div><b>WordSprint</b><small>CET-4 认词训练</small></div></div>
+    <nav id="nav">
+      <a href="#/" data-view="home">学习概览</a>
+      <a href="#/study" data-view="study">单词卡片</a>
+      <a href="#/wrong" data-view="wrong">错词本</a>
+      <a href="#/words" data-view="words">词库</a>
+      <a href="#/stats" data-view="stats">统计</a>
+      <a href="#/settings" data-view="settings">设置</a>
+    </nav>
+  </header>
+  <main id="app"><div class="loading">正在加载 SQLite 数据库…</div></main>
+  <div id="toast" class="toast" hidden></div>
+  <footer class="foot">数据仅保存在本机浏览器（SQLite → IndexedDB），清除浏览器数据前请先在「词库」页备份数据库。</footer>
+  <script src="assets/vendor/sqljs/sql-wasm.js"></script>
+  <script type="module" src="js/app.js?v=1"></script>
+</body>
+</html>
