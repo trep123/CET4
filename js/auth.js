@@ -1,4 +1,4 @@
-import { getSQL } from './sqlite.js';
+import { getSQL } from './sqlite.js?v=5';
 
 // 登录校验：用户存放在 data/users.sqlite3 的 users 表（PBKDF2-SHA256 哈希，见 tools/adduser.py）
 const KEY = 'wordsprint_auth';
