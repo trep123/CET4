@@ -1,4 +1,6 @@
-// 登录校验：用户存放在 data/cet4.sqlite3 的 users 表（PBKDF2-SHA256 哈希，见 tools/adduser.py）
+import { getSQL } from './sqlite.js';
+
+// 登录校验：用户存放在 data/users.sqlite3 的 users 表（PBKDF2-SHA256 哈希，见 tools/adduser.py）
 const KEY = 'wordsprint_auth';
 const DAYS = 7;
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -24,9 +26,9 @@ async function pbkdf2(password, saltHex, iterations) {
 }
 
 export async function login(username, password) {
-  const res = await fetch(`data/cet4.sqlite3?t=${Date.now()}`, { cache: 'no-store' });
+  const res = await fetch(`data/users.sqlite3?t=${Date.now()}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('无法读取用户数据');
-  const SQL = await window.initSqlJs({ locateFile: (f) => `assets/vendor/sqljs/${f}` });
+  const SQL = await getSQL();
   const db = new SQL.Database(new Uint8Array(await res.arrayBuffer()));
   let row = null;
   try {
