@@ -1,0 +1,73 @@
+{
+ "version": "c8cdccb29a33",
+ "total": 5276,
+ "chunk_size": 500,
+ "chunks": [
+  {
+   "file": "part-01.sqlite3",
+   "count": 500,
+   "first": "the",
+   "last": "account"
+  },
+  {
+   "file": "part-02.sqlite3",
+   "count": 500,
+   "first": "affect",
+   "last": "gender"
+  },
+  {
+   "file": "part-03.sqlite3",
+   "count": 500,
+   "first": "reform",
+   "last": "grain"
+  },
+  {
+   "file": "part-04.sqlite3",
+   "count": 500,
+   "first": "inevitable",
+   "last": "rescue"
+  },
+  {
+   "file": "part-05.sqlite3",
+   "count": 500,
+   "first": "rid",
+   "last": "slice"
+  },
+  {
+   "file": "part-06.sqlite3",
+   "count": 500,
+   "first": "specify",
+   "last": "cocktail"
+  },
+  {
+   "file": "part-07.sqlite3",
+   "count": 500,
+   "first": "compliment",
+   "last": "butterfly"
+  },
+  {
+   "file": "part-08.sqlite3",
+   "count": 500,
+   "first": "cafeteria",
+   "last": "briefcase"
+  },
+  {
+   "file": "part-09.sqlite3",
+   "count": 500,
+   "first": "brink",
+   "last": "dynasty"
+  },
+  {
+   "file": "part-10.sqlite3",
+   "count": 500,
+   "first": "edible",
+   "last": "bamboo"
+  },
+  {
+   "file": "part-11.sqlite3",
+   "count": 276,
+   "first": "barometer",
+   "last": "zoom"
+  }
+ ]
+}
