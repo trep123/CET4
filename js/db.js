@@ -1,5 +1,5 @@
 // SQLite（sql.js）数据层：建表、持久化到 IndexedDB、备份/恢复
-import { getSQL } from './sqlite.js?v=5';
+import { getSQL } from './sqlite.js?v=6';
 
 const IDB_NAME = 'wordsprint';
 const IDB_STORE = 'sqlite';
