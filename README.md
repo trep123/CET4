@@ -34,10 +34,33 @@ CET4/
 │  ├─ api.js                  # 业务逻辑（对应原方案的 /api/* 接口）
 │  ├─ db.js                   # sql.js 初始化、建表、示例词、IndexedDB 持久化、备份恢复
 │  └─ scheduler.js            # 间隔复习算法
-├─ data/words.csv             # 可选：放在仓库里的词库，页面上一键加载
+├─ data/cet4.sqlite3          # 内置四级词库（SQLite），首次打开自动载入
+├─ data/source/*.xlsx        # 词库源表
+├─ data/words.csv             # 可选：放在仓库里的 CSV 词库，页面上一键加载
+├─ tools/build_seed.py        # xlsx → data/cet4.sqlite3
 ├─ assets/vendor/sqljs/       # sql.js 1.13.0（sql-wasm.js / sql-wasm.wasm）
 └─ docs/IMPLEMENTATION_PLAN.md
 ```
+
+## 内置四级词库（5278 词）
+
+`data/cet4.sqlite3` 是由 `data/source/英语四级词汇与翻译_5278词.xlsx` 生成的 SQLite 词库（5276 条；may/May、march/March 大小写同形词已合并释义）：
+
+- 按真题词频排序，新词队列按词频从高到低出词
+- `level`：四级核心 4023 词为 `CET-4`，冲刺扩展 1253 词为 `CET-4 扩展`
+- 音标按「读法来源」写入：英式词典 → `ipa_uk`，美式补充 → `ipa_us`，人工核对 → 两者都写；当前口音缺音标时卡片会显示另一套并标注（英）/（美）
+- `tags`：学习层级;主题分类;子分类（以及「又作 …」其他拼写）
+
+网页首次打开时自动载入；已经用过的浏览器下次打开会自动合并（只更新词条，学习进度保留）。
+
+修改 xlsx 后重新生成：
+
+```bash
+pip install openpyxl
+python tools/build_seed.py
+```
+
+然后把 `js/db.js` 里的 `SEED_VERSION` 加 1 并提交，所有浏览器下次打开时会自动合并新版词库。
 
 ## 添加词库
 
