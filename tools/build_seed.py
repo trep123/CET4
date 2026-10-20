@@ -11,6 +11,9 @@
 import sqlite3, sys, os, datetime
 import openpyxl
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from adduser import USERS_SCHEMA  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data', 'source', '英语四级词汇与翻译_5278词.xlsx')
 OUT = os.path.join(ROOT, 'data', 'cet4.sqlite3')
@@ -42,10 +45,17 @@ def main():
     hi = next(i for i, r in enumerate(rows) if r and r[0] == '词频排名')
     head = list(rows[hi])
     col = {name: head.index(name) for name in head if name}
+    users = []  # 重建词库时保留 users 表（由 tools/adduser.py 管理）
     if os.path.exists(OUT):
+        old = sqlite3.connect(OUT)
+        if old.execute("SELECT 1 FROM sqlite_master WHERE name='users'").fetchone():
+            users = old.execute('SELECT username, name, role, salt, hash, iterations, disabled FROM users').fetchall()
+        old.close()
         os.remove(OUT)
     con = sqlite3.connect(OUT)
     con.executescript(SCHEMA)
+    con.execute(USERS_SCHEMA)
+    con.executemany('INSERT INTO users (username, name, role, salt, hash, iterations, disabled) VALUES (?,?,?,?,?,?,?)', users)
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     data = [r for r in rows[hi + 1:] if r and r[col['单词']]]
     data.sort(key=lambda r: r[col['词频排名']] or 10**9)
