@@ -37,10 +37,25 @@ CET4/
 ├─ data/cet4.sqlite3          # 内置四级词库（SQLite），首次打开自动载入
 ├─ data/source/*.xlsx        # 词库源表
 ├─ data/words.csv             # 可选：放在仓库里的 CSV 词库，页面上一键加载
-├─ tools/build_seed.py        # xlsx → data/cet4.sqlite3
+├─ tools/build_seed.py        # xlsx → data/cet4.sqlite3（保留 users 表）
+├─ tools/adduser.py           # 用户管理（users 表）
 ├─ assets/vendor/sqljs/       # sql.js 1.13.0（sql-wasm.js / sql-wasm.wasm）
 └─ docs/IMPLEMENTATION_PLAN.md
 ```
+
+## 登录与用户
+
+打开页面需先登录。用户存放在 `data/cet4.sqlite3` 的 `users` 表（username / name / role / salt / hash / iterations / disabled），密码以 PBKDF2-SHA256（随机盐，100000 次迭代）哈希保存，不存明文。登录状态保留 7 天，右上角可退出。
+
+管理用户（只需 Python 3 标准库，改完提交 `data/cet4.sqlite3`）：
+
+```bash
+python tools/adduser.py <用户名> <密码> [显示名称] [角色]   # 添加 / 修改密码
+python tools/adduser.py --list
+python tools/adduser.py --disable <用户名>   # --enable / --remove
+```
+
+> 纯前端登录只是访问门槛：仓库公开时数据库文件可被直接下载，请使用不在别处复用的密码。
 
 ## 内置四级词库（5278 词）
 
