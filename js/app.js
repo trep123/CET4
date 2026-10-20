@@ -1,6 +1,7 @@
 import { openDb, exportBytes, restoreBytes, health } from './db.js';
 import * as api from './api.js';
 import { RATINGS } from './scheduler.js';
+import { currentUser, login, logout } from './auth.js';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -342,7 +343,49 @@ function route() {
   window.scrollTo(0, 0);
 }
 
-(async () => {
+function viewLogin() {
+  document.getElementById('nav').hidden = true;
+  $app.innerHTML = `
+    <form class="panel form login" id="lf">
+      <h1>登录 WordSprint</h1>
+      <label>用户名<input name="u" autocomplete="username" required autofocus /></label>
+      <label>密码<input name="p" type="password" autocomplete="current-password" required /></label>
+      <p class="err" id="lerr"></p>
+      <button class="btn" type="submit">登录</button>
+    </form>`;
+  const f = $app.querySelector('#lf');
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = '验证中…';
+    try {
+      await login(f.u.value, f.p.value);
+      start();
+    } catch (err) {
+      f.querySelector('#lerr').textContent = err.message;
+      btn.disabled = false;
+      btn.textContent = '登录';
+    }
+  };
+}
+
+function addUserBar(user) {
+  const nav = document.getElementById('nav');
+  nav.hidden = false;
+  if (nav.querySelector('.user')) return;
+  const span = document.createElement('span');
+  span.className = 'user';
+  span.innerHTML = `${esc(user.name || user.username)} · <button class="link" type="button">退出</button>`;
+  span.querySelector('button').onclick = () => { logout(); location.hash = '#/'; location.reload(); };
+  nav.appendChild(span);
+}
+
+async function start() {
+  const user = currentUser();
+  if (!user) return viewLogin();
+  addUserBar(user);
+  $app.innerHTML = '<div class="loading">正在加载 SQLite 数据库…</div>';
   try {
     const merged = await openDb();
     if (merged && merged.created) setTimeout(() => toast(`已载入内置四级词库：新增 ${merged.created} 词，更新 ${merged.updated} 词`, 4000), 300);
@@ -352,4 +395,5 @@ function route() {
   }
   window.addEventListener('hashchange', route);
   route();
-})();
+}
+start();
