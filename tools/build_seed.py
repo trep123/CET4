@@ -1,23 +1,25 @@
-"""从「英语四级词汇与翻译_5278词.xlsx」生成 data/cet4.sqlite3（网页首次打开时自动载入的词库）。
+"""从「英语四级词汇与翻译_5278词.xlsx」生成按需加载的分包词库 data/words/。
+
+输出：
+    data/words/manifest.json      版本号、总词数、分包列表
+    data/words/part-01.sqlite3 …  每包 CHUNK 个词（按真题词频排序），表结构 words(...)
 
 用法（项目根目录）：
     pip install openpyxl
     python tools/build_seed.py [xlsx路径]
 
 美式音标统一取自 data/source/ipa_us.tsv（缺失的词才用 xlsx 中的美式补充）。
-修改 xlsx 或 ipa_us.tsv 后重新运行，并把 js/db.js 中的 SEED_VERSION 加 1，
-已在使用的浏览器会在下次打开时自动合并新词库（只更新词条，不清除学习进度）。
+版本号由词条内容自动计算；内容有变化时，浏览器下次打开会自动更新已加载的分包（学习进度保留）。
 """
-import sqlite3, sys, os, datetime
+import hashlib, json, sqlite3, sys, os, glob
 import openpyxl
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from adduser import USERS_SCHEMA  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data', 'source', '英语四级词汇与翻译_5278词.xlsx')
-OUT = os.path.join(ROOT, 'data', 'cet4.sqlite3')
+OUT_DIR = os.path.join(ROOT, 'data', 'words')
 US_TSV = os.path.join(ROOT, 'data', 'source', 'ipa_us.tsv')  # 美式音标表：单词<TAB>音标
+CHUNK = 500
+FIELDS = ['word', 'ipa_uk', 'ipa_us', 'meaning_zh', 'level', 'tags', 'source']
 
 def load_us():
     m = {}
@@ -29,15 +31,6 @@ def load_us():
             m[w.strip().lower()] = ipa.strip().replace('ɫ', 'l').replace('ɹ', 'r')
     return m
 
-SCHEMA = """
-CREATE TABLE words (
-  id INTEGER PRIMARY KEY, word VARCHAR(120) NOT NULL UNIQUE, ipa_uk VARCHAR(160) DEFAULT '', ipa_us VARCHAR(160) DEFAULT '',
-  meaning_zh TEXT NOT NULL, example_en TEXT DEFAULT '', example_zh TEXT DEFAULT '', level VARCHAR(40) DEFAULT 'CET-4',
-  tags VARCHAR(300) DEFAULT '', source VARCHAR(80) DEFAULT 'starter', active BOOLEAN DEFAULT 1, created_at VARCHAR(40) NOT NULL
-);
-CREATE INDEX ix_words_word ON words(word);
-"""
-
 def main():
     wb = openpyxl.load_workbook(SRC, read_only=True)
     ws = wb['词汇总表']
@@ -45,18 +38,6 @@ def main():
     hi = next(i for i, r in enumerate(rows) if r and r[0] == '词频排名')
     head = list(rows[hi])
     col = {name: head.index(name) for name in head if name}
-    users = []  # 重建词库时保留 users 表（由 tools/adduser.py 管理）
-    if os.path.exists(OUT):
-        old = sqlite3.connect(OUT)
-        if old.execute("SELECT 1 FROM sqlite_master WHERE name='users'").fetchone():
-            users = old.execute('SELECT username, name, role, salt, hash, iterations, disabled FROM users').fetchall()
-        old.close()
-        os.remove(OUT)
-    con = sqlite3.connect(OUT)
-    con.executescript(SCHEMA)
-    con.execute(USERS_SCHEMA)
-    con.executemany('INSERT INTO users (username, name, role, salt, hash, iterations, disabled) VALUES (?,?,?,?,?,?,?)', users)
-    now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     data = [r for r in rows[hi + 1:] if r and r[col['单词']]]
     data.sort(key=lambda r: r[col['词频排名']] or 10**9)
     us = load_us()
@@ -86,18 +67,31 @@ def main():
             'level': 'CET-4' if tier == '四级核心' else 'CET-4 扩展',
             'tags': ';'.join(map(str, tags)),
         }
+    words = []
     for e in entries.values():
         if us.get(e['word']):
             e['ipa_us'] = us[e['word']]
-        con.execute(
-            "INSERT INTO words (word, ipa_uk, ipa_us, meaning_zh, example_en, example_zh, level, tags, source, active, created_at) VALUES (?,?,?,?,'','',?,?,'cet4-5278',1,?)",
-            (e['word'], e['ipa_uk'], e['ipa_us'], e['meaning'], e['level'], e['tags'], now),
-        )
-    n, dup = len(entries), len(data) - len(entries)
-    con.commit()
-    con.execute('VACUUM')
-    con.close()
-    print(f'写入 {n} 词，合并/跳过 {dup} 行 -> {OUT}')
+        words.append([e['word'], e['ipa_uk'], e['ipa_us'], e['meaning'], e['level'], e['tags'], 'cet4-5278'])
+    version = hashlib.sha1(json.dumps(words, ensure_ascii=False).encode('utf-8')).hexdigest()[:12]
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for f in glob.glob(os.path.join(OUT_DIR, 'part-*.sqlite3')):
+        os.remove(f)
+    chunks = []
+    for i in range(0, len(words), CHUNK):
+        part = words[i:i + CHUNK]
+        name = f'part-{i // CHUNK + 1:02d}.sqlite3'
+        con = sqlite3.connect(os.path.join(OUT_DIR, name))
+        con.execute('PRAGMA page_size=1024')
+        con.execute('CREATE TABLE words (id INTEGER PRIMARY KEY, ' + ', '.join(f'{f} TEXT' for f in FIELDS) + ')')
+        con.executemany(f'INSERT INTO words ({", ".join(FIELDS)}) VALUES ({",".join("?" * len(FIELDS))})', part)
+        con.commit()
+        con.execute('VACUUM')
+        con.close()
+        chunks.append({'file': name, 'count': len(part), 'first': part[0][0], 'last': part[-1][0]})
+    manifest = {'version': version, 'total': len(words), 'chunk_size': CHUNK, 'chunks': chunks}
+    with open(os.path.join(OUT_DIR, 'manifest.json'), 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=1)
+    print(f'写入 {len(words)} 词，合并/跳过 {len(data) - len(words)} 行 -> {len(chunks)} 个分包，版本 {version}')
 
 if __name__ == '__main__':
     main()
