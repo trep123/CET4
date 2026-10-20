@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-用户管理脚本（只用 Python 3 标准库）。用户存放在 data/cet4.sqlite3 的 users 表。
+用户管理脚本（只用 Python 3 标准库）。用户存放在 data/users.sqlite3 的 users 表。
 
   添加/更新用户:  python tools/adduser.py <用户名> <密码> [显示名称] [角色]
   删除用户:       python tools/adduser.py --remove <用户名>
@@ -8,12 +8,12 @@
   列出用户:       python tools/adduser.py --list
 
 密码使用 PBKDF2-SHA256（随机 16 字节盐，100000 次迭代）哈希后保存，不存明文，
-与前端 js/auth.js 的校验算法一致。改完提交 data/cet4.sqlite3 即生效。
+与前端 js/auth.js 的校验算法一致。改完提交 data/users.sqlite3 即生效。
 """
 import hashlib, os, re, sqlite3, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(ROOT, 'data', 'cet4.sqlite3')
+DB = os.path.join(ROOT, 'data', 'users.sqlite3')
 ITERATIONS = 100000
 USERS_SCHEMA = """CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY, username VARCHAR(32) NOT NULL UNIQUE, name VARCHAR(64) DEFAULT '',
@@ -23,6 +23,7 @@ USERS_SCHEMA = """CREATE TABLE IF NOT EXISTS users (
 
 def connect():
     con = sqlite3.connect(DB)
+    con.execute('PRAGMA page_size=1024')
     con.execute(USERS_SCHEMA)
     return con
 
