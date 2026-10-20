@@ -76,7 +76,7 @@ CREATE INDEX IF NOT EXISTS ix_logs_time ON review_logs(reviewed_at);
 CREATE TABLE IF NOT EXISTS app_settings (
   id INTEGER PRIMARY KEY,
   daily_new_count INTEGER DEFAULT 20,
-  accent VARCHAR(10) DEFAULT 'en-GB',
+  accent VARCHAR(10) DEFAULT 'en-US',
   show_example BOOLEAN DEFAULT 1,
   created_at VARCHAR(40),
   updated_at VARCHAR(40)
@@ -109,13 +109,13 @@ function seed() {
     }
   }
   if (!get('SELECT id FROM app_settings WHERE id=1')) {
-    db.run(`INSERT INTO app_settings (id, daily_new_count, accent, show_example, created_at, updated_at) VALUES (1,20,'en-GB',1,?,?)`, [t, t]);
+    db.run(`INSERT INTO app_settings (id, daily_new_count, accent, show_example, created_at, updated_at) VALUES (1,20,'en-US',1,?,?)`, [t, t]);
   }
 }
 
 // 内置词库 data/cet4.sqlite3（由 tools/build_seed.py 从 xlsx 生成）。
 // 词库更新后把 SEED_VERSION 加 1，已有用户下次打开时自动合并（只更新词条，保留学习进度）。
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 2; // v2：全部词条补齐美式音标，默认口音改为美式
 const SEED_URL = 'data/cet4.sqlite3';
 
 async function mergeSeed() {
@@ -150,6 +150,7 @@ async function mergeSeed() {
   });
   st.free();
   seedDb.close();
+  if (cur < 2) db.run("UPDATE app_settings SET accent='en-US', updated_at=? WHERE id=1", [t]);
   db.run(`PRAGMA user_version=${SEED_VERSION}`);
   return { created, updated };
 }
