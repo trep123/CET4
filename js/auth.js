@@ -1,4 +1,5 @@
-import { getSQL } from './sqlite.js?v=5';
+import { getSQL } from './sqlite.js?v=6';
+import { pbkdf2Sha256 } from './pbkdf2.js?v=6';
 
 // 登录校验：用户存放在 data/users.sqlite3 的 users 表（PBKDF2-SHA256 哈希，见 tools/adduser.py）
 const KEY = 'wordsprint_auth';
@@ -20,6 +21,10 @@ export function logout() {
 }
 
 async function pbkdf2(password, saltHex, iterations) {
+  // Web Crypto 只在 HTTPS / localhost 下可用；其他情况（http 局域网地址等）用纯 JS 实现
+  if (!globalThis.crypto?.subtle) {
+    return hex(pbkdf2Sha256(new TextEncoder().encode(password), unhex(saltHex), iterations).buffer);
+  }
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: unhex(saltHex), iterations }, key, 256);
   return hex(bits);
