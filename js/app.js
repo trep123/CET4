@@ -1,4 +1,5 @@
-import { openDb, exportBytes, restoreBytes, health } from './db.js';
+import { openDb, exportBytes, restoreBytes, health, seedStatus, loadMoreChunks } from './db.js';
+import { getSQL } from './sqlite.js';
 import * as api from './api.js';
 import { RATINGS } from './scheduler.js';
 import { currentUser, login, logout } from './auth.js';
@@ -82,18 +83,27 @@ const task = (mode, title, desc, n) =>
 // ---------- 页面：单词卡片 ----------
 const session = { mode: 'new', dir: 'en2zh', queue: [], idx: 0, flipped: false, done: 0 };
 
-function startSession(mode, dir) {
+async function startSession(mode, dir) {
   session.mode = mode;
   session.dir = dir || session.dir;
-  session.queue = api.studyQueue(mode); // 本轮快照
+  session.queue = await api.studyQueue(mode); // 本轮快照（必要时按需加载词库分包）
   session.idx = 0;
   session.done = 0;
   session.flipped = false;
 }
 
-function viewStudy(params) {
+async function viewStudy(params) {
   const mode = params.get('mode') || session.mode;
-  if (mode !== session.mode || !session.queue.length || session.idx >= session.queue.length || params.get('restart')) startSession(mode);
+  if (mode !== session.mode || !session.queue.length || session.idx >= session.queue.length || params.get('restart')) {
+    $app.innerHTML = '<div class="loading">正在准备单词…</div>';
+    try {
+      await startSession(mode);
+    } catch (e) {
+      $app.innerHTML = `<div class="empty-box">${esc(e.message)}</div>`;
+      return;
+    }
+    if (currentView !== 'study') return;
+  }
   renderCard();
 }
 
@@ -115,7 +125,7 @@ function renderCard() {
       <p>${s.queue.length ? `本轮评级 ${s.done} 个，跳过 ${s.queue.length - s.done} 个。` : s.mode === 'new' ? '今日新词额度已用完，或词库里没有未学的词。' : '换一个队列试试。'}</p>
       <div class="row center"><a class="btn" href="#/">返回概览</a><button class="btn ghost" data-restart>重新加载队列</button></div></div>`;
     bindStudyHead();
-    $app.querySelector('[data-restart]').onclick = () => { startSession(s.mode); renderCard(); };
+    $app.querySelector('[data-restart]').onclick = async () => { await startSession(s.mode); renderCard(); };
     return;
   }
 
@@ -199,17 +209,31 @@ function viewWrong() {
 
 // ---------- 页面：词库 ----------
 const wordsState = { q: '', offset: 0, limit: 50 };
+// 加载全部剩余分包，并在页面上显示进度
+async function loadAllChunks() {
+  const st = seedStatus();
+  if (!st.pendingChunks) return;
+  toast(`正在加载词库 0/${st.pendingChunks}…`, 60000);
+  await loadMoreChunks(Infinity, (i, n) => toast(`正在加载词库 ${i}/${n}…`, 60000));
+  toast('词库已全部加载');
+}
+
 function viewWords() {
+  if (wordsState.q.trim() && seedStatus().pendingChunks) {
+    loadAllChunks().then(() => currentView === 'words' && viewWords()).catch((e) => toast(e.message, 4000));
+  }
+  const seed = seedStatus();
   const { total, items } = api.searchWords(wordsState);
   const page = Math.floor(wordsState.offset / wordsState.limit) + 1;
   const pages = Math.max(1, Math.ceil(total / wordsState.limit));
   const status = (w) => (!w.due_at ? '<span class="tag">新词</span>' : w.last_rating === 'again' || w.last_rating === 'hard' ? '<span class="tag tag-hard">待巩固</span>' : `<span class="tag tag-good">${fmtTime(w.due_at)}</span>`);
   $app.innerHTML = `
-    <div class="page-head"><h1>词库 <small>${total} 条</small></h1>
+    <div class="page-head"><h1>词库 <small>${total} 条${seed.pending ? `（另有 ${seed.pending} 词未加载）` : ''}</small></h1>
       <input id="q" class="search" placeholder="搜索单词 / 中文 / 标签" value="${esc(wordsState.q)}" /></div>
     <table class="tbl"><thead><tr><th>单词</th><th>英式 IPA</th><th>美式 IPA</th><th>释义</th><th>标签</th><th>状态 / 下次复习</th><th></th></tr></thead><tbody>
       ${items.map((w) => `<tr><td><b>${esc(w.word)}</b></td><td class="ipa-s">${esc(w.ipa_uk)}</td><td class="ipa-s">${esc(w.ipa_us)}</td><td>${esc(w.meaning_zh)}</td><td class="muted">${esc(w.tags)}</td><td>${status(w)}</td><td><button class="link" data-say="${esc(w.word)}">🔊</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted center">没有匹配的词条</td></tr>'}
     </tbody></table>
+    ${seed.pending ? `<p class="note center">内置词库按需加载：已加载 ${seed.chunks - seed.pendingChunks}/${seed.chunks} 包。学新词、搜索或导出时会自动加载。 <button class="link" data-loadall>立即加载全部</button></p>` : ''}
     <div class="row center pager"><button class="btn ghost small" data-prev ${page <= 1 ? 'disabled' : ''}>上一页</button><span>${page} / ${pages}</span><button class="btn ghost small" data-next ${page >= pages ? 'disabled' : ''}>下一页</button></div>
 
     <section class="panel">
@@ -236,6 +260,7 @@ function viewWords() {
 
   const q = $app.querySelector('#q');
   q.oninput = () => { clearTimeout(viewWords._t); viewWords._t = setTimeout(() => { wordsState.q = q.value; wordsState.offset = 0; viewWords(); const n = $app.querySelector('#q'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 250); };
+  $app.querySelector('[data-loadall]')?.addEventListener('click', () => loadAllChunks().then(() => currentView === 'words' && viewWords()).catch((e) => toast(e.message, 4000)));
   $app.querySelector('[data-prev]').onclick = () => { wordsState.offset = Math.max(0, wordsState.offset - wordsState.limit); viewWords(); };
   $app.querySelector('[data-next]').onclick = () => { wordsState.offset += wordsState.limit; viewWords(); };
   $app.querySelectorAll('[data-say]').forEach((b) => (b.onclick = () => speak(b.dataset.say)));
@@ -258,7 +283,10 @@ function viewWords() {
   };
   $app.querySelector('[data-template]').onclick = () => download('wordsprint-template.csv',
     '\uFEFFword,ipa_uk,ipa_us,meaning_zh,example_en,example_zh,level,tags\r\nachieve,/əˈtʃiːv/,/əˈtʃiːv/,实现；达到（目标）,She worked hard to achieve her goal.,她努力实现自己的目标。,CET-4,核心动词;目标\r\n', 'text/csv');
-  $app.querySelector('[data-export]').onclick = () => download(`wordsprint-words-${stamp()}.csv`, api.exportCsv(), 'text/csv;charset=utf-8');
+  $app.querySelector('[data-export]').onclick = async () => {
+    try { await loadAllChunks(); } catch (e) { return toast(e.message, 4000); }
+    download(`wordsprint-words-${stamp()}.csv`, api.exportCsv(), 'text/csv;charset=utf-8');
+  };
   $app.querySelector('[data-backup]').onclick = () => download(`wordsprint-${stamp()}.sqlite3`, new Blob([exportBytes()], { type: 'application/x-sqlite3' }));
   $app.querySelector('#restoreFile').onchange = async (e) => {
     const f = e.target.files[0];
@@ -381,14 +409,15 @@ function addUserBar(user) {
   nav.appendChild(span);
 }
 
+getSQL(); // 登录页显示时就开始下载并编译 SQLite wasm
+
 async function start() {
   const user = currentUser();
   if (!user) return viewLogin();
   addUserBar(user);
   $app.innerHTML = '<div class="loading">正在加载 SQLite 数据库…</div>';
   try {
-    const merged = await openDb();
-    if (merged && merged.created) setTimeout(() => toast(`已载入内置四级词库：新增 ${merged.created} 词，更新 ${merged.updated} 词`, 4000), 300);
+    await openDb();
   } catch (e) {
     $app.innerHTML = `<div class="empty-box">数据库加载失败：${esc(e.message)}<br/>请使用较新的 Chrome / Edge / Firefox / Safari，并通过 http(s) 访问（不能直接双击打开文件）。</div>`;
     return;
