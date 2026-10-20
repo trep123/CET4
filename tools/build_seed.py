@@ -4,7 +4,8 @@
     pip install openpyxl
     python tools/build_seed.py [xlsx路径]
 
-修改 xlsx 后重新运行，并把 js/db.js 中的 SEED_VERSION 加 1，
+美式音标统一取自 data/source/ipa_us.tsv（缺失的词才用 xlsx 中的美式补充）。
+修改 xlsx 或 ipa_us.tsv 后重新运行，并把 js/db.js 中的 SEED_VERSION 加 1，
 已在使用的浏览器会在下次打开时自动合并新词库（只更新词条，不清除学习进度）。
 """
 import sqlite3, sys, os, datetime
@@ -13,6 +14,17 @@ import openpyxl
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data', 'source', '英语四级词汇与翻译_5278词.xlsx')
 OUT = os.path.join(ROOT, 'data', 'cet4.sqlite3')
+US_TSV = os.path.join(ROOT, 'data', 'source', 'ipa_us.tsv')  # 美式音标表：单词<TAB>音标
+
+def load_us():
+    m = {}
+    if os.path.exists(US_TSV):
+        for line in open(US_TSV, encoding='utf-8'):
+            if line.startswith('#') or '\t' not in line:
+                continue
+            w, ipa = line.rstrip('\n').split('\t', 1)
+            m[w.strip().lower()] = ipa.strip().replace('ɫ', 'l').replace('ɹ', 'r')
+    return m
 
 SCHEMA = """
 CREATE TABLE words (
@@ -37,6 +49,7 @@ def main():
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     data = [r for r in rows[hi + 1:] if r and r[col['单词']]]
     data.sort(key=lambda r: r[col['词频排名']] or 10**9)
+    us = load_us()
     entries = {}  # 小写单词 -> 记录；大小写不同的同形词（may/May）合并释义
     for r in data:
         raw = str(r[col['单词']]).strip()
@@ -64,6 +77,8 @@ def main():
             'tags': ';'.join(map(str, tags)),
         }
     for e in entries.values():
+        if us.get(e['word']):
+            e['ipa_us'] = us[e['word']]
         con.execute(
             "INSERT INTO words (word, ipa_uk, ipa_us, meaning_zh, example_en, example_zh, level, tags, source, active, created_at) VALUES (?,?,?,?,'','',?,?,'cet4-5278',1,?)",
             (e['word'], e['ipa_uk'], e['ipa_us'], e['meaning'], e['level'], e['tags'], now),
